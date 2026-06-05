@@ -7,6 +7,7 @@ from fritzconnection.lib.fritzwireguard import (
     API_KEY_ACTIVE,
     API_KEY_NAME,
     API_KEY_UID,
+    API_KEY_ACTIVATED,
 )
 from fritzconnection.lib.fritzwebui import FritzWebUI
 
@@ -120,6 +121,21 @@ def test_toggle_vpn_verify_mismatch():
             API_KEY_UID: "uid-office",
             API_KEY_NAME: "Office",
             API_KEY_ACTIVE: False,
+        }
+    }
+    with patch.object(fw, "get_vpn_connections", return_value=after):
+        with patch.object(fw, "_request", return_value={}):
+            assert fw.toggle_vpn("uid-office", enable=True) is False
+
+
+def test_toggle_vpn_ignores_activated_field():
+    fw = FritzWireguard(fc=_mock_fc())
+    after = {
+        "uid-office": {
+            API_KEY_UID: "uid-office",
+            API_KEY_NAME: "Office",
+            API_KEY_ACTIVE: False,
+            API_KEY_ACTIVATED: True,
         }
     }
     with patch.object(fw, "get_vpn_connections", return_value=after):

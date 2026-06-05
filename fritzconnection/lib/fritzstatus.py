@@ -3,11 +3,9 @@ Module to read status-information from a FritzBox router.
 Since v2.0 this module is mainly a glue-module for backward compatibility.
 """
 
-import datetime
-from dataclasses import field
-
 from fritzconnection import FritzConnection
 from fritzconnection.core.description import DeviceLog
+from fritzconnection.core.exceptions import FritzAuthorizationError
 from fritzconnection.core.exceptions import FritzConnectionException
 from fritzconnection.core.exceptions import FritzServiceError
 from fritzconnection.core.utils import get_xml_root
@@ -38,9 +36,14 @@ class FritzStatus:
         self.fc = fc
         try:
             self._fwan = FritzWAN(self.fc)
-        except FritzServiceError:
+        except (FritzServiceError, FritzAuthorizationError):
             # will happen on non-WAN devices
             self._fwan = None
+
+    @property
+    def modelname(self) -> str:
+        """The device model name (delegated to the underlying `FritzConnection`)."""
+        return self.fc.modelname
             
     @property
     def fwan(self):

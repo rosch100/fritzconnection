@@ -1,6 +1,6 @@
 """Tests for FritzWebUI module."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from fritzconnection.lib.fritzwebui import (
     FritzWebUI,
@@ -20,6 +20,7 @@ def _mock_fc(*, use_tls: bool = True) -> MagicMock:
     mock_fc.port = 49443 if use_tls else 49000
     mock_fc.soaper.user = "admin"
     mock_fc.soaper.password = "password"
+    mock_fc.session = MagicMock()
     if use_tls:
         mock_fc.call_action.return_value = {"NewPort": 443}
     return mock_fc
@@ -76,3 +77,98 @@ def test_calculate_pbkdf2_response():
 
 def test_calculate_pbkdf2_invalid():
     assert _calculate_pbkdf2_response("invalid", "password") is None
+
+
+def test_request_get_includes_sid_and_accept_header():
+    fc = _mock_fc()
+    fw = FritzWebUI(fc=fc)
+    fw._sid = "sid123"
+    fc.session.get.return_value = MagicMock(
+        text='{"result":"ok"}',
+        json=MagicMock(return_value={"result": "ok"}),
+        raise_for_status=MagicMock(),
+    )
+
+    with patch.object(fw, "_ensure_sid", return_value="sid123"):
+        result = fw._request(
+            API_DATA,
+            {"page": "shareWireguard"},
+            method="GET",
+        )
+
+    expected_url = f"{fw._base_url}{API_DATA}"
+    expected_headers = {"Accept": "application/json"}
+    expected_params = {"page": "shareWireguard", "sid": "sid123"}
+    fc.session.get.assert_called_once_with(
+        expected_url,
+        params=expected_params,
+        headers=expected_headers,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    assert result == {"result": "ok"}
+
+
+def test_request_post_includes_sid_and_accept_header():
+    fc = _mock_fc()
+    fw = FritzWebUI(fc=fc)
+    fw._sid = "sid123"
+    fc.session.post.return_value = MagicMock(
+        text='{"result":"ok"}',
+        json=MagicMock(return_value={"result": "ok"}),
+        raise_for_status=MagicMock(),
+    )
+
+    with patch.object(fw, "_ensure_sid", return_value="sid123"):
+        result = fw._request(
+            API_DATA,
+            {"page": "shareWireguard"},
+            method="POST",
+        )
+
+    expected_url = f"{fw._base_url}{API_DATA}"
+    expected_headers = {"Accept": "application/json"}
+    expected_data = {"page": "shareWireguard", "sid": "sid123"}
+    fc.session.post.assert_called_once_with(
+        expected_url,
+        data=expected_data,
+        headers=expected_headers,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    assert result == {"result": "ok"}
+
+
+def test_request_put_includes_authorization_content_type_and_json_body():
+    fc = _mock_fc()
+    fw = FritzWebUI(fc=fc)
+    fw._sid = "sid123"
+    fc.session.put.return_value = MagicMock(
+        text='{"result":"ok"}',
+        json=MagicMock(return_value={"result": "ok"}),
+        raise_for_status=MagicMock(),
+    )
+
+    endpoint = "/api/v0/generic/vpn/connection/uid-office"
+    json_body = {"activated": 1}
+
+    with patch.object(fw, "_ensure_sid", return_value="sid123"):
+        result = fw._request(
+            endpoint,
+            method="PUT",
+            json_body=json_body,
+        )
+
+    expected_url = f"{fw._base_url}{endpoint}"
+    expected_headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": "AVM-SID sid123",
+        "Origin": fc.address,
+        "Referer": f"{fc.address}/",
+    }
+    fc.session.put.assert_called_once_with(
+        expected_url,
+        headers=expected_headers,
+        json=json_body,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    assert result == {"result": "ok"}
