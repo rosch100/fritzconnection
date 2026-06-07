@@ -60,7 +60,7 @@ This version adds support for the new FRITZ! Smart Home REST API-Interface. Ther
 - bugfix: remove syntax-warning from error in redaction regex. (#244, #249)
 - bugfix: corrected typo in documentation (#252)
 - documentation: reset colors to furo-default for better readability in dark mode
-- FritzWebUI/FritzWireguard: add WireGuard VPN list/toggle via FRITZ!Box Web UI API (FRITZ!OS 7.50+). (#261)
+- FritzWireguard: add WireGuard VPN list/toggle via FRITZ!Box Web UI API (FRITZ!OS 7.50+). (#261)
 
 
 1.15.0 - 2025-05-17

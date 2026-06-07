@@ -1,5 +1,8 @@
 """
-Module to access WireGuard VPN connections via the Fritz!Box Web UI API.
+Module to access WireGuard VPN connections via the FRITZ!Box Web UI API.
+
+Only WireGuard-related endpoints are implemented here. Session handling and
+REST-API calls reuse existing `fritzconnection` core functionality.
 """
 # This module is part of the FritzConnection package.
 # https://github.com/kbr/fritzconnection
@@ -10,7 +13,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .fritzwebui import FritzWebUI
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import HTTPError, Timeout
+
+from ..core.fritzhttp import AUTHORIZATION_PREFIX, REST_API_BASEPATH
+from .fritzbase import AbstractLibraryBase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +31,9 @@ API_KEY_CONNECTED = "connected"
 API_KEY_NAME = "name"
 
 API_PAGE_SHAREWIREGUARD = "shareWireguard"
-API_VPN_CONNECTION = "/api/v0/generic/vpn/connection/{uid}"
+API_VPN_CONNECTION = "generic/vpn/connection"
+
+DEFAULT_TIMEOUT = 10
 
 
 def _parse_bool(value: Any) -> bool:
@@ -50,7 +59,7 @@ def _normalize_connection(data: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-class FritzWireguard(FritzWebUI):
+class FritzWireguard(AbstractLibraryBase):
     """
     Class to list and toggle WireGuard VPN connections.
 
@@ -63,7 +72,8 @@ class FritzWireguard(FritzWebUI):
 
     def get_vpn_connections(self) -> dict[str, dict[str, Any]]:
         """Return WireGuard VPN connections keyed by uid."""
-        response = self.get_page_data(API_PAGE_SHAREWIREGUARD)
+
+        response = self._post_data_lua(API_PAGE_SHAREWIREGUARD)
         if response is None:
             return {}
 
@@ -90,17 +100,78 @@ class FritzWireguard(FritzWebUI):
                     result[normalized[API_KEY_UID]] = normalized
         return result
 
+    def _post_data_lua(self, page: str) -> dict[str, Any] | None:
+        """
+        Calls `POST /data.lua` with `page=<...>` and returns parsed JSON.
+
+        The endpoint is undocumented by AVM and might change between FRITZ!OS
+        versions.
+        """
+        # Reuse core session handling (PBKDF2/MD5) and restore session if
+        # needed. This lives in `fritzconnection.core.fritz_sid`.
+        sid = self.fc.http_interface.get_sid()
+
+        url = f"{self.fc.http_interface.router_url}/data.lua"
+        headers = {"Accept": "application/json"}
+        data = {"sid": sid, "page": page}
+
+        try:
+            response = self.fc.session.post(
+                url, data=data, headers=headers, timeout=DEFAULT_TIMEOUT
+            )
+            response.raise_for_status()
+            if not response.text.strip():
+                return {}
+            return response.json()
+        except HTTPError:
+            return None
+        except (Timeout, RequestsConnectionError):
+            return None
+        except ValueError:
+            # JSON parsing failed
+            return None
+
     def toggle_vpn(self, connection_uid: str, enable: bool) -> bool:
         """
         Enable or disable the VPN connection with the given uid.
 
         Returns True if the active state matches `enable` after the call.
         """
-        if self._request(
-            API_VPN_CONNECTION.format(uid=connection_uid),
-            method="PUT",
-            json_body={API_KEY_ACTIVATED: 1 if enable else 0},
-        ) is None:
+        sid = self.fc.http_interface.get_sid()
+        url = (
+            f"{self.fc.http_interface.router_url}/"
+            f"{REST_API_BASEPATH}/"
+            f"{API_VPN_CONNECTION}/"
+            f"{connection_uid}"
+        )
+        headers = {
+            "Authorization": f"{AUTHORIZATION_PREFIX} {sid}",
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+            # The FRITZ!Box Web UI expects browser-like headers for PUT calls.
+            # Important: use the same host/port as the request url.
+            "Origin": self.fc.http_interface.router_url,
+            "Referer": f"{self.fc.http_interface.router_url}/",
+        }
+
+        try:
+            # `FritzConnection` configures HTTP Digest Auth on the shared
+            # session. For this Web UI REST endpoint, Digest Auth must not
+            # interfere with `Authorization: AVM-SID ...`.
+            old_auth = self.fc.session.auth
+            self.fc.session.auth = None
+            try:
+                response = self.fc.session.put(
+                    url,
+                    headers=headers,
+                    json={API_KEY_ACTIVATED: 1 if enable else 0},
+                    timeout=DEFAULT_TIMEOUT,
+                )
+            finally:
+                self.fc.session.auth = old_auth
+            if response.status_code != 200:
+                return False
+        except (Timeout, RequestsConnectionError, HTTPError):
             return False
 
         after = self.get_vpn_connections()

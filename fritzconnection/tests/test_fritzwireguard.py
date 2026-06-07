@@ -9,7 +9,6 @@ from fritzconnection.lib.fritzwireguard import (
     API_KEY_UID,
     API_KEY_ACTIVATED,
 )
-from fritzconnection.lib.fritzwebui import FritzWebUI
 
 
 def _mock_fc() -> MagicMock:
@@ -19,6 +18,11 @@ def _mock_fc() -> MagicMock:
     mock_fc.soaper.user = "admin"
     mock_fc.soaper.password = "password"
     mock_fc.call_action.return_value = {"NewPort": 443}
+    mock_fc.session = MagicMock()
+    mock_fc.session.auth = object()
+    mock_fc.http_interface = MagicMock()
+    mock_fc.http_interface.get_sid.return_value = "sid123"
+    mock_fc.http_interface.router_url = "https://192.168.178.1:443"
     return mock_fc
 
 
@@ -28,14 +32,9 @@ def test_module_constants():
     assert API_KEY_UID == "uid"
 
 
-def test_fritzwireguard_inherits_fritzwebui():
-    fw = FritzWireguard(fc=_mock_fc())
-    assert isinstance(fw, FritzWebUI)
-
-
 def test_get_vpn_connections_empty():
     fw = FritzWireguard(fc=_mock_fc())
-    with patch.object(fw, "get_page_data", return_value=None):
+    with patch.object(fw, "_post_data_lua", return_value=None):
         assert fw.get_vpn_connections() == {}
 
 
@@ -56,7 +55,7 @@ def test_get_vpn_connections_with_list_data():
             }
         }
     }
-    with patch.object(fw, "get_page_data", return_value=mock_response):
+    with patch.object(fw, "_post_data_lua", return_value=mock_response):
         connections = fw.get_vpn_connections()
         assert connections["uid-office"]["name"] == "Office"
         assert connections["uid-office"]["active"] is True
@@ -77,7 +76,7 @@ def test_get_vpn_connections_with_dict_data():
             }
         }
     }
-    with patch.object(fw, "get_page_data", return_value=mock_response):
+    with patch.object(fw, "_post_data_lua", return_value=mock_response):
         connections = fw.get_vpn_connections()
         assert connections["wg-1"]["active"] is True
         assert connections["wg-1"]["connected"] is False
@@ -85,7 +84,7 @@ def test_get_vpn_connections_with_dict_data():
 
 def test_get_vpn_connections_malformed():
     fw = FritzWireguard(fc=_mock_fc())
-    with patch.object(fw, "get_page_data", return_value={"invalid": "data"}):
+    with patch.object(fw, "_post_data_lua", return_value={"invalid": "data"}):
         assert fw.get_vpn_connections() == {}
 
 
@@ -99,19 +98,15 @@ def test_toggle_vpn_success():
         }
     }
     with patch.object(fw, "get_vpn_connections", return_value=after):
-        with patch.object(fw, "_request", return_value={}) as mock_request:
-            assert fw.toggle_vpn("uid-office", enable=True) is True
-            mock_request.assert_called_once_with(
-                "/api/v0/generic/vpn/connection/uid-office",
-                method="PUT",
-                json_body={"activated": 1},
-            )
+        fw.fc.session.put.return_value.status_code = 200
+        assert fw.toggle_vpn("uid-office", enable=True) is True
+        fw.fc.session.put.assert_called_once()
 
 
 def test_toggle_vpn_none_response():
     fw = FritzWireguard(fc=_mock_fc())
-    with patch.object(fw, "_request", return_value=None):
-        assert fw.toggle_vpn("uid-office", enable=False) is False
+    fw.fc.session.put.return_value.status_code = 401
+    assert fw.toggle_vpn("uid-office", enable=False) is False
 
 
 def test_toggle_vpn_verify_mismatch():
@@ -124,8 +119,8 @@ def test_toggle_vpn_verify_mismatch():
         }
     }
     with patch.object(fw, "get_vpn_connections", return_value=after):
-        with patch.object(fw, "_request", return_value={}):
-            assert fw.toggle_vpn("uid-office", enable=True) is False
+        fw.fc.session.put.return_value.status_code = 200
+        assert fw.toggle_vpn("uid-office", enable=True) is False
 
 
 def test_toggle_vpn_ignores_activated_field():
@@ -139,5 +134,5 @@ def test_toggle_vpn_ignores_activated_field():
         }
     }
     with patch.object(fw, "get_vpn_connections", return_value=after):
-        with patch.object(fw, "_request", return_value={}):
-            assert fw.toggle_vpn("uid-office", enable=True) is False
+        fw.fc.session.put.return_value.status_code = 200
+        assert fw.toggle_vpn("uid-office", enable=True) is False

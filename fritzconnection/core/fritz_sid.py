@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import field
+from typing import Any
+import time
 from http import HTTPStatus
 
 from fritzconnection.core.description import SessionInfo
@@ -31,7 +32,7 @@ class FritzSID:
     """
     Provides access to an AVM-SID for using the REST-API
     """
-    def __init__(self, fc: FritzConnection):
+    def __init__(self, fc: Any):
         self.fc = fc
         self.session_id = None
         self.challenge_method = self.get_challenge_method()
@@ -59,6 +60,14 @@ class FritzSID:
         if not self.is_valid_session_id(self.session_id):
             si = self.get_session_info()
             challenge = si.Challenge
+            # FRITZ!Box can enforce a temporary block-after-failed-logins.
+            # If BlockTime is set we need to wait before performing the next
+            # SID challenge-response to avoid permission issues.
+            try:
+                if si.BlockTime and int(si.BlockTime) > 0:
+                    time.sleep(int(si.BlockTime))
+            except (TypeError, ValueError):
+                pass
             if challenge.startswith(PBKDF2_CHALLENGE_INDICATOR):
                 challenge_hash = self.get_hash_from_PBKDF2_challenge(challenge)
             else:
